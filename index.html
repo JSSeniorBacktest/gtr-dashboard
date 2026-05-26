@@ -553,8 +553,9 @@ async function loadData() {
         ep:           parseFloat(r[8])||0,
         xp:           parseFloat(r[9])||0,
         result:       r[10]||'',
-        prr:          parseFloat(r[11])||0,
-        pnl:          parseFloat(r[12])||0
+        pnl:          parseFloat(r[12])||0,
+        // PRR always calculated from PNL — never read from Sheets
+        get prr() { return (this.pnl / 100).toFixed(2); }
       });
     }
   }
