@@ -628,6 +628,8 @@ async function writeToSheet(payload) {
 // CSV PARSER
 // ══════════════════════════════════════════
 function parseCSV(text) {
+  // Remove BOM if present
+  text = text.replace(/^\uFEFF/, '');
   const lines = text.trim().split('\n');
   if (lines.length < 2) return null;
 
@@ -641,45 +643,52 @@ function parseCSV(text) {
     rows.push(obj);
   }
 
-  // Group into trades (entry + exit pairs)
+  // Group into trades by Trade #
   const map = {};
   rows.forEach(r => {
     const num  = r['Trade #'] || r['Trade#'] || r['#'];
+    if (!num) return;
     const type = (r['Type']||'').toLowerCase();
     if (!map[num]) map[num] = {};
+    // Handle "entry short", "entry long", "exit short", "exit long"
     if (type.includes('entry')) map[num].entry = r;
     else if (type.includes('exit')) map[num].exit = r;
   });
 
   const trades = [];
   Object.entries(map).forEach(([num, pair]) => {
-    if (!pair.entry) return;
-    const e    = pair.entry;
-    const x    = pair.exit || {};
-    const dir  = (e['Signal']||e['Type']||'').toLowerCase().includes('short') ? 'Short' : 'Long';
-    const ep   = parseFloat(e['Price USDT']||e['Price']||0);
-    const xp   = parseFloat(x['Price USDT']||x['Price']||ep);
-    const win  = dir==='Long' ? xp > ep : xp < ep;
-    const pct  = ep > 0 ? ((xp-ep)/ep*100*(dir==='Long'?1:-1)) : 0;
+    const e = pair.entry || pair.exit;
+    const x = pair.exit  || pair.entry;
+    if (!e) return;
 
-    // PRR = Net P&L USDT / 100 (fixed $100 risk per trade)
-    // Win: e.g. +$200 profit → PRR = +2.0R
-    // Loss: e.g. -$100 loss  → PRR = -1.0R
-    const rawPnl = parseFloat(x['Net P&L USDT']||x['Net P&L']||0);
-    const prr    = rawPnl !== 0 ? (rawPnl / 100).toFixed(2) : (win ? '1.00' : '-1.00');
-    const pnl    = rawPnl !== 0 ? rawPnl.toFixed(2) : (win ? '100.00' : '-100.00');
-    const dt   = (e['Date and time']||'').split(' ');
-    const xdt  = (x['Date and time']||'').split(' ');
+    // Determine direction from Type or Signal
+    const typeStr   = (e['Type']||'').toLowerCase();
+    const signalStr = (e['Signal']||'').toLowerCase();
+    const dir = (typeStr.includes('short') || signalStr.includes('short')) ? 'Short' : 'Long';
+
+    const ep  = parseFloat(e['Price USDT']||e['Price']||0);
+    const xp  = parseFloat(x['Price USDT']||x['Price']||ep);
+    const win = dir==='Long' ? xp > ep : xp < ep;
+
+    // P&L — take from exit row first, fallback to entry row
+    const rawPnl = parseFloat(x['Net P&L USDT']||x['Net P&L']||e['Net P&L USDT']||0);
+    const prr    = rawPnl !== 0 ? (rawPnl/100).toFixed(2) : (win?'1.00':'-1.00');
+    const pnl    = rawPnl !== 0 ? rawPnl.toFixed(2) : (win?'100.00':'-100.00');
+
+    // Date — handle date-only (no time) format
+    const eDt = (e['Date and time']||e['Date']||'').split(' ');
+    const xDt = (x['Date and time']||x['Date']||'').split(' ');
+
     trades.push({
-      num: parseInt(num)||trades.length+1,
-      date: dt[0]||'',
-      time: dt[1]||'',
-      xdate: xdt[0]||'',
-      xtime: xdt[1]||'',
+      num:   parseInt(num)||trades.length+1,
+      date:  eDt[0]||'',
+      time:  eDt[1]||'—',
+      xdate: xDt[0]||'',
+      xtime: xDt[1]||'—',
       dir, ep, xp,
       result: win?'Win':'Loss',
       prr, pnl,
-      pct: pct.toFixed(2)
+      pct: ep>0?((xp-ep)/ep*100*(dir==='Long'?1:-1)).toFixed(2):'0'
     });
   });
 
