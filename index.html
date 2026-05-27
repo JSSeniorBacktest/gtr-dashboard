@@ -362,12 +362,12 @@ td{height:var(--row-h);padding:0 8px;font-size:12px;color:var(--text);border-rig
       </div>
       <div class="form-row">
         <label class="form-label">Upload TradingView CSV</label>
-        <label class="drop-zone" id="dropZone">
-          <input type="file" accept=".csv" id="csvFile" onchange="handleCSV(event)">
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()">
+          <input type="file" accept=".csv" id="csvFile" onchange="handleCSV(event)" style="display:none">
           <div style="font-size:22px;margin-bottom:6px">📂</div>
           <div>Drop CSV here or click to browse</div>
           <div style="font-size:11px;margin-top:4px;opacity:.6" id="fileLabel">No file selected — export from TradingView Strategy Tester</div>
-        </label>
+        </div>
       </div>
       <div id="csvPreview" style="display:none;margin-top:8px;padding:10px 12px;background:var(--green-bg);border-radius:4px;border:1px solid var(--green-mid);font-size:12px;color:var(--green)"></div>
     </div>
