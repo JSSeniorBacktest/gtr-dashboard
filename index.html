@@ -794,7 +794,7 @@ function render() {
 
   head.innerHTML = `<tr>
     <th class="rn-hdr col-hdr"></th>
-    <th class="col-hdr ${sortBy==='combo'?'sorted':''}" onclick="cycleSortCol('combo')">Combination</th>
+    <th class="col-hdr ${sortBy==='combo'?'sorted':''}" onclick="cycleSortCol('combo')">Strategy Name</th>
     <th class="col-hdr">Entry</th>
     <th class="col-hdr">Context</th>
     <th class="col-hdr">TP Target</th>
@@ -868,11 +868,9 @@ function render() {
       const l10len = Math.max(last10.length,1);
       const l10wr  = (l10w/l10len*100).toFixed(0);
 
-      const comboName = `${c.ctx[0]==='None'?'Base':c.ctx.join('+')} → ${c.tp}`;
-
       html+=`<tr class="data-row ${isSel?'selected':''}" onclick="selectRow('${c.id}')">
         <td class="rn-cell">${rowNum++}</td>
-        <td class="cell-combo">${comboName}</td>
+        <td class="cell-combo">${c.name}</td>
         <td class="cell-entry ${eCls}">${c.entry}</td>
         <td><div class="ctx-wrap">${ctxHtml}</div></td>
         <td class="cell-tp">${c.tp}</td>
