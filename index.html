@@ -150,13 +150,6 @@ td{height:var(--row-h);padding:0 8px;font-size:12px;color:var(--text);border-rig
 .dp-trade-row.win{border-left:3px solid var(--green-mid)}
 .dp-trade-row.loss{border-left:3px solid var(--red-mid)}
 
-/* ── TAB BAR ── */
-.tabbar{height:36px;display:flex;align-items:flex-end;background:var(--s1);border-top:1px solid var(--border);padding:0 8px;flex-shrink:0;gap:2px}
-.tab-item{height:28px;padding:0 16px;font-size:12px;border:1px solid var(--border);border-bottom:none;border-radius:4px 4px 0 0;cursor:pointer;background:white;color:var(--text);font-weight:500;display:flex;align-items:center;gap:6px;font-family:var(--sans)}
-.tab-item.inactive{background:var(--s2);color:var(--sub);border-color:transparent}
-.tab-item.inactive:hover{background:var(--s3)}
-.tab-dot{width:8px;height:8px;border-radius:50%}
-
 /* ── STATUS BAR ── */
 .statusbar{height:22px;display:flex;align-items:center;justify-content:flex-end;gap:16px;background:var(--s2);border-top:1px solid var(--border);padding:0 16px;flex-shrink:0;font-size:11px;color:var(--sub)}
 .statusbar em{color:var(--text);font-style:normal;font-weight:600}
@@ -493,8 +486,8 @@ function doPost(e) {
     // ── 1. Write to backend STRATEGIES tab (dashboard reads this) ──
     if (data.type === 'strategy') {
       var s = ss.getSheetByName('STRATEGIES');
-      if (!s) { s = ss.insertSheet('STRATEGIES'); s.appendRow(['ID','Name','Entry','Context','TP','RR12','DateAdded','Strategy','Coin']); }
-      s.appendRow([data.id,data.name,data.entry,data.context,data.tp,data.rr12,data.dateAdded,data.strategy,data.coin]);
+      if (!s) { s = ss.insertSheet('STRATEGIES'); s.appendRow(['ID','Name','Entry','Context','TP','RR12','DateAdded','Strategy','Coin','TabGID']); }
+      s.appendRow([data.id,data.name,data.entry,data.context,data.tp,data.rr12,data.dateAdded,data.strategy,data.coin,'']);
     }
 
     // ── 2. Write to backend TRADES tab + create human-readable tabs ──
@@ -544,7 +537,20 @@ function doPost(e) {
       });
       runSheet.autoResizeColumns(1, hdrs.length);
 
-      // ── 4. Update/create {COIN}_MASTER tab ──
+      // ── 4. Store GID back into STRATEGIES row (column J) ──
+      var runGid = runSheet.getSheetId();
+      var stratSheet = ss.getSheetByName('STRATEGIES');
+      if (stratSheet) {
+        var stratData = stratSheet.getDataRange().getValues();
+        for (var i = 1; i < stratData.length; i++) {
+          if (stratData[i][0] === data.sid) {
+            stratSheet.getRange(i+1, 10).setValue(runGid);
+            break;
+          }
+        }
+      }
+
+      // ── 5. Update/create {COIN}_MASTER tab ──
       var masterSheet = ss.getSheetByName(masterName);
       if (!masterSheet) {
         masterSheet = ss.insertSheet(masterName);
@@ -555,7 +561,6 @@ function doPost(e) {
 
       var wr     = calcWR(data.trades);
       var netRR  = calcNetRR(data.trades);
-      var runGid = runSheet.getSheetId();
       var linkFormula = '=HYPERLINK("#gid=' + runGid + '","→ ' + tabName + '")';
       var nextRow = masterSheet.getLastRow() + 1;
       masterSheet.getRange(nextRow, 1, 1, 9).setValues([[
@@ -611,7 +616,7 @@ async function readRange(range) {
 async function loadData() {
   setStatusMsg('Syncing…');
   const [sRows, tRows] = await Promise.all([
-    readRange('STRATEGIES!A:I'),
+    readRange('STRATEGIES!A:J'),
     readRange('TRADES!A:M')
   ]);
 
@@ -629,7 +634,8 @@ async function loadData() {
         rr12:      r[5]||'No',
         dateAdded: r[6]||'',
         strategy:  r[7]||'Uncategorized',
-        coin:      r[8]||'Unknown'
+        coin:      r[8]||'Unknown',
+        tabGid:    r[9]||''
       });
     }
   }
@@ -675,7 +681,7 @@ function buildCombos() {
     const netRR   = closed.reduce((s,t) => s+parseFloat(t.pnl)/100, 0);
     return {
       id: s.id||String(idx+1), name: s.name,
-      strategy: s.strategy, coin: s.coin,
+      strategy: s.strategy, coin: s.coin, tabGid: s.tabGid,
       entry: s.entry, ctx: ctxArr, tp: s.tp, rr12: s.rr12,
       trades: closed.length, wins: wins.length,
       losses: closed.length-wins.length,
@@ -961,8 +967,11 @@ function selectRow(id) {
   const panel = document.getElementById('detailPanel');
   if(!panel) return;
   panel.classList.add('open');
+  const sheetsLink = c.tabGid
+    ? `<a href="https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${c.tabGid}" target="_blank" style="font-size:11px;color:var(--blue);text-decoration:none;display:inline-flex;align-items:center;gap:4px;margin-top:6px">📊 View in Google Sheets →</a>`
+    : '';
   document.getElementById('dpTitle').textContent=`${c.entry} · ${c.tp}${c.rr12==='Yes'?' · 1:2✓':''}`;
-  document.getElementById('dpSub').innerHTML=`${c.name}<br>Context: ${c.ctx.join(' + ')}`;
+  document.getElementById('dpSub').innerHTML=`${c.name}<br>Context: ${c.ctx.join(' + ')}${sheetsLink?'<br>'+sheetsLink:''}`;
   const pC=c.avgPRR>=1.5?'g':c.avgPRR>=0?'b':'r';
   document.getElementById('dpStats').innerHTML=`
     <div class="dp-stat"><div class="dp-stat-label">Win Rate</div><div class="dp-stat-val b">${c.trades?((c.wr*100).toFixed(1)+'%'):'—'}</div></div>
@@ -1091,7 +1100,7 @@ async function saveStrategy() {
   const dateAdded = new Date().toISOString().split('T')[0];
 
   await writeToSheet({type:'strategy',id:stratId,name,entry,context:ctx,tp,rr12,dateAdded,strategy,coin});
-  await writeToSheet({type:'trades', coin, runName:name, entry, context:ctx, tp, rr12, dateAdded, trades:parsedCSV.map(t=>({sid:stratId,sname:name,num:t.num,date:t.date,time:t.time,xdate:t.xdate,xtime:t.xtime,dir:t.dir,ep:t.ep,xp:t.xp,result:t.result,prr:t.prr,pnl:t.pnl}))});
+  await writeToSheet({type:'trades', sid:stratId, coin, runName:name, entry, context:ctx, tp, rr12, dateAdded, trades:parsedCSV.map(t=>({sid:stratId,sname:name,num:t.num,date:t.date,time:t.time,xdate:t.xdate,xtime:t.xtime,dir:t.dir,ep:t.ep,xp:t.xp,result:t.result,prr:t.prr,pnl:t.pnl}))});
 
   showToast('✓ Saved — refreshing…');
   closeAddModal();
