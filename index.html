@@ -628,8 +628,8 @@ async function writeToSheet(payload) {
 // CSV PARSER
 // ══════════════════════════════════════════
 function parseCSV(text) {
-  // Remove BOM if present
-  text = text.replace(/^\uFEFF/, '');
+  // Remove BOM and normalize line endings
+  text = text.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   const lines = text.trim().split('\n');
   if (lines.length < 2) return null;
 
