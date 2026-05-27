@@ -286,13 +286,6 @@ td{height:var(--row-h);padding:0 8px;font-size:12px;color:var(--text);border-rig
 <!-- MAIN CONTENT AREA -->
 <div id="mainArea" style="flex:1;overflow:hidden;display:flex;flex-direction:column"></div>
 
-<!-- TAB BAR -->
-<div class="tabbar">
-  <div class="tab-item"><div class="tab-dot" style="background:var(--sheets)"></div>Overview</div>
-  <div class="tab-item inactive"><div class="tab-dot" style="background:var(--blue)"></div>TRADES</div>
-  <div class="tab-item inactive"><div class="tab-dot" style="background:var(--yellow)"></div>STRATEGIES</div>
-</div>
-
 <!-- STATUS BAR -->
 <div class="statusbar">
   <span id="statusMsg" style="margin-right:auto;color:var(--sub)">Connecting…</span>
@@ -440,20 +433,140 @@ const API_KEY  = 'AIzaSyDDFb9tLYCjec0hI6t1gGk3b8h-v_Yksr8';
 const BASE_URL = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
 let SCRIPT_URL = localStorage.getItem('jsbt_script_url') || '';
 
-const APPS_SCRIPT = `function doPost(e) {
+const APPS_SCRIPT = `// ── HELPERS ──
+function sanitizeTabName(coin, runName) {
+  var prefix = coin.replace(/[^A-Za-z0-9]/g,'').substring(0,8).toUpperCase();
+  var run = runName
+    .replace(/Daily CRT/g,'DailyCRT')
+    .replace(/Weekly CRT/g,'WeeklyCRT')
+    .replace(/POI\\/OB\\/FVG/g,'POI')
+    .replace(/Asian Zone/g,'AsianZone')
+    .replace(/15M Momo/g,'15MMomo')
+    .replace(/5M Momo/g,'5MMomo')
+    .replace(/1H POI/g,'1HPOI')
+    .replace(/15M POI/g,'15MPOI')
+    .replace(/1H Liq/g,'1HLiq')
+    .replace(/15M Liq/g,'15MLiq')
+    .replace(/5M MSS/g,'5MMSS')
+    .replace(/5M BOS/g,'5MBOS')
+    .replace(/1M MSS/g,'1MMSS')
+    .replace(/1M BOS/g,'1MBOS')
+    .replace(/[^A-Za-z0-9]/g,'_')
+    .replace(/_+/g,'_')
+    .replace(/^_|_$/g,'');
+  var base = prefix + '_' + run;
+  if (base.length > 50) base = base.substring(0, 50);
+  return base;
+}
+
+function getUniqueTabName(ss, baseName) {
+  var name = baseName;
+  var i = 2;
+  while (ss.getSheetByName(name)) { name = baseName + '_v' + i; i++; }
+  return name;
+}
+
+function getMasterTabName(coin) {
+  return coin.replace(/[^A-Za-z0-9]/g,'').substring(0,8).toUpperCase() + '_MASTER';
+}
+
+function calcWR(trades) {
+  var closed = trades.filter(function(t){ return t.result==='Win'||t.result==='Loss'; });
+  if (!closed.length) return '—';
+  var wins = closed.filter(function(t){ return t.result==='Win'; });
+  return (wins.length/closed.length*100).toFixed(1)+'%';
+}
+
+function calcNetRR(trades) {
+  var closed = trades.filter(function(t){ return t.result==='Win'||t.result==='Loss'; });
+  if (!closed.length) return '—';
+  var net = closed.reduce(function(s,t){ return s + parseFloat(t.pnl)/100; }, 0);
+  return (net>=0?'+':'')+net.toFixed(2)+'R';
+}
+
+// ── MAIN ──
+function doPost(e) {
   try {
     var data = JSON.parse(e.postData.contents);
     var ss = SpreadsheetApp.openById('${SHEET_ID}');
+
+    // ── 1. Write to backend STRATEGIES tab (dashboard reads this) ──
     if (data.type === 'strategy') {
       var s = ss.getSheetByName('STRATEGIES');
       if (!s) { s = ss.insertSheet('STRATEGIES'); s.appendRow(['ID','Name','Entry','Context','TP','RR12','DateAdded','Strategy','Coin']); }
       s.appendRow([data.id,data.name,data.entry,data.context,data.tp,data.rr12,data.dateAdded,data.strategy,data.coin]);
     }
+
+    // ── 2. Write to backend TRADES tab + create human-readable tabs ──
     if (data.type === 'trades') {
+      // Backend TRADES tab
       var t = ss.getSheetByName('TRADES');
       if (!t) { t = ss.insertSheet('TRADES'); t.appendRow(['StrategyID','StrategyName','TradeNum','Date','Time','ExitDate','ExitTime','Direction','EntryPrice','ExitPrice','Result','PRR','PNL']); }
       data.trades.forEach(function(r) { t.appendRow([r.sid,r.sname,r.num,r.date,r.time,r.xdate,r.xtime,r.dir,r.ep,r.xp,r.result,r.prr,r.pnl]); });
+
+      // ── 3. Create human-readable Run tab ──
+      var coin    = data.coin || 'UNKNOWN';
+      var runName = data.runName || data.sname || 'Run';
+      var tabName = getUniqueTabName(ss, sanitizeTabName(coin, runName));
+      var runSheet = ss.insertSheet(tabName);
+
+      // Back link to MASTER
+      var masterName = getMasterTabName(coin);
+      runSheet.getRange(1,1).setValue('← Back to ' + masterName);
+      runSheet.getRange(1,1).setFontColor('#1a73e8').setFontWeight('bold');
+
+      // Run summary row
+      runSheet.getRange(3,1,1,5).setValues([[
+        'Run: ' + runName,
+        'Entry: ' + data.entry,
+        'Context: ' + data.context,
+        'TP: ' + data.tp,
+        '1:2: ' + data.rr12
+      ]]);
+      runSheet.getRange(3,1,1,5).setBackground('#e8f0fe').setFontWeight('bold');
+
+      // Trade headers
+      var hdrs = ['Trade #','Entry Date','Entry Time','Exit Date','Exit Time','Direction','Entry Price','Exit Price','Result','PRR'];
+      runSheet.getRange(5,1,1,hdrs.length).setValues([hdrs]);
+      runSheet.getRange(5,1,1,hdrs.length).setBackground('#f1f3f4').setFontWeight('bold');
+
+      // Trade rows
+      data.trades.forEach(function(r, i) {
+        var row = [r.num,r.date,r.time,r.xdate,r.xtime,r.dir,r.ep,r.xp,r.result,(parseFloat(r.pnl)/100).toFixed(2)+'R'];
+        runSheet.getRange(6+i, 1, 1, row.length).setValues([row]);
+        var resultCell = runSheet.getRange(6+i, 9);
+        var prrCell    = runSheet.getRange(6+i, 10);
+        if (r.result === 'Win') {
+          resultCell.setFontColor('#137333'); prrCell.setFontColor('#137333');
+        } else {
+          resultCell.setFontColor('#c5221f'); prrCell.setFontColor('#c5221f');
+        }
+      });
+      runSheet.autoResizeColumns(1, hdrs.length);
+
+      // ── 4. Update/create {COIN}_MASTER tab ──
+      var masterSheet = ss.getSheetByName(masterName);
+      if (!masterSheet) {
+        masterSheet = ss.insertSheet(masterName);
+        var mHdrs = ['Run Name','Entry','Context','TP','1:2','Date Added','Trades','WR','Net RR','Detail Tab'];
+        masterSheet.getRange(1,1,1,mHdrs.length).setValues([mHdrs]);
+        masterSheet.getRange(1,1,1,mHdrs.length).setBackground('#202124').setFontColor('#ffffff').setFontWeight('bold');
+      }
+
+      var wr     = calcWR(data.trades);
+      var netRR  = calcNetRR(data.trades);
+      var runGid = runSheet.getSheetId();
+      var linkFormula = '=HYPERLINK("#gid=' + runGid + '","→ ' + tabName + '")';
+      var nextRow = masterSheet.getLastRow() + 1;
+      masterSheet.getRange(nextRow, 1, 1, 9).setValues([[
+        runName, data.entry, data.context, data.tp, data.rr12, data.dateAdded,
+        data.trades.length, wr, netRR
+      ]]);
+      masterSheet.getRange(nextRow, 10).setFormula(linkFormula);
+      masterSheet.getRange(nextRow, 10).setFontColor('#1a73e8');
+      masterSheet.autoResizeColumns(1, 10);
     }
+
     return ContentService.createTextOutput(JSON.stringify({success:true})).setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
     return ContentService.createTextOutput(JSON.stringify({success:false,error:err.toString()})).setMimeType(ContentService.MimeType.JSON);
@@ -978,7 +1091,7 @@ async function saveStrategy() {
   const dateAdded = new Date().toISOString().split('T')[0];
 
   await writeToSheet({type:'strategy',id:stratId,name,entry,context:ctx,tp,rr12,dateAdded,strategy,coin});
-  await writeToSheet({type:'trades',trades:parsedCSV.map(t=>({sid:stratId,sname:name,num:t.num,date:t.date,time:t.time,xdate:t.xdate,xtime:t.xtime,dir:t.dir,ep:t.ep,xp:t.xp,result:t.result,prr:t.prr,pnl:t.pnl}))});
+  await writeToSheet({type:'trades', coin, runName:name, entry, context:ctx, tp, rr12, dateAdded, trades:parsedCSV.map(t=>({sid:stratId,sname:name,num:t.num,date:t.date,time:t.time,xdate:t.xdate,xtime:t.xtime,dir:t.dir,ep:t.ep,xp:t.xp,result:t.result,prr:t.prr,pnl:t.pnl}))});
 
   showToast('✓ Saved — refreshing…');
   closeAddModal();
